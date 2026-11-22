@@ -40,6 +40,16 @@ pub extern "system" fn Java_keyframethumbs_Native_requestThumbnail<'local>(
     }
 }
 
+/// Call on the same worker thread that requests thumbnails.
+#[no_mangle]
+pub extern "system" fn Java_keyframethumbs_Native_releaseThumbnailSession(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) {
+    #[cfg(target_os = "android")]
+    source::release();
+}
+
 /// Diagnostic-only: same inputs as `requestThumbnail`, but returns
 /// "OK:<n bytes>" or "ERR:<stage>: <message>" as a string instead of the
 /// JPEG — lets a failure be read directly off a log line instead of

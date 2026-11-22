@@ -55,10 +55,6 @@ fn read_nearest_keyframe(
     }
 
     unsafe {
-        if avformat_find_stream_info(fmt_ctx, ptr::null_mut()) < 0 {
-            return Err("avformat_find_stream_info failed".into());
-        }
-
         let stream_idx = av_find_best_stream(
             fmt_ctx,
             AVMediaType_AVMEDIA_TYPE_VIDEO,
@@ -154,9 +150,17 @@ mod local {
                 return Err(format!("avformat_open_input failed: {rc}"));
             }
             let _guard = FormatGuard(fmt_ctx);
+            if ffi::avformat_find_stream_info(fmt_ctx, ptr::null_mut()) < 0 {
+                return Err("avformat_find_stream_info failed".into());
+            }
             read_nearest_keyframe(fmt_ctx, time_ms)
         }
     }
+}
+
+#[cfg(target_os = "android")]
+pub fn release() {
+    remote::release();
 }
 
 #[cfg(target_os = "android")]
@@ -222,11 +226,45 @@ mod remote {
         reader.seek(offset, whence)
     }
 
+    // Fields drop in order. FFmpeg closes before the custom I/O and reader.
+    struct RemoteSession {
+        format: FormatGuard,
+        _avio: AvioGuard,
+        _reader: ReaderGuard,
+        url: String,
+        headers: Vec<(String, String)>,
+    }
+
+    thread_local! {
+        static SESSION: std::cell::RefCell<Option<RemoteSession>> = const {
+            std::cell::RefCell::new(None)
+        };
+    }
+
+    pub fn release() {
+        SESSION.with(|session| session.borrow_mut().take());
+    }
+
     pub fn open_and_seek(
         url: &str,
         time_ms: u64,
         headers: &[(String, String)],
     ) -> Result<EncodedFrame, String> {
+        SESSION.with(|session| {
+            let mut active = session.borrow_mut();
+            if !active.as_ref().is_some_and(|source| source.url == url && source.headers == headers) {
+                *active = None;
+                *active = Some(open(url, headers)?);
+            }
+            let result = read_nearest_keyframe(active.as_ref().unwrap().format.0, time_ms);
+            if result.is_err() {
+                *active = None;
+            }
+            result
+        })
+    }
+
+    fn open(url: &str, headers: &[(String, String)]) -> Result<RemoteSession, String> {
         let reader =
             Box::new(RangeReader::open(url, headers).map_err(|e| format!("range reader: {e}"))?);
         let opaque = Box::into_raw(reader) as *mut c_void;
@@ -273,8 +311,17 @@ mod remote {
                 }
                 return Err(format!("avformat_open_input (remote) failed: {rc}"));
             }
-            let _fmt_guard = FormatGuard(fmt_ctx);
-            read_nearest_keyframe(fmt_ctx, time_ms)
+            let format = FormatGuard(fmt_ctx);
+            if ffi::avformat_find_stream_info(fmt_ctx, ptr::null_mut()) < 0 {
+                return Err("avformat_find_stream_info failed".into());
+            }
+            Ok(RemoteSession {
+                format,
+                _avio: _avio_guard,
+                _reader: _reader_guard,
+                url: url.to_string(),
+                headers: headers.to_vec(),
+            })
         }
     }
 }
