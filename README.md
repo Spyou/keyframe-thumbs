@@ -6,14 +6,28 @@ remote URL (HTTP range requests, no full download) or an HLS segment.
 
 ## Status
 
-Scaffolding stage. `hls`, `scale`, `encode` and `session` are real and
-tested. `source` (keyframe index + range reads) and `codec` (FFmpeg decode)
-are stubs — next milestone.
+`hls`, `scale`, `encode`, `session` and the local-file decode path
+(`source` + `codec`, backed by a vendored FFmpeg) are real and tested.
+Remote HTTP(S) range-based reading isn't wired up yet — `source::open_and_seek`
+takes a local file path for now.
 
 ## Building for Android
 
+First build (or rebuild) the vendored FFmpeg static libs — not committed to
+git, see `vendor/build_android.sh`:
+
 ```
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o jniLibs build --release
+export ANDROID_NDK_HOME=/path/to/ndk
+./vendor/build_android.sh arm64-v8a
+./vendor/build_android.sh armeabi-v7a
+./vendor/build_android.sh x86_64
+./vendor/build_android.sh x86   # needs EXTRA_CONFIGURE="--disable-asm" — see the script
+```
+
+Then:
+
+```
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -o jniLibs build --release
 ```
 
 Produces `libkeyframe_thumbs.so` per ABI under `jniLibs/`, exporting

@@ -1,2 +1,6 @@
 /target
 /jniLibs
+/vendor/ffmpeg-7.1
+/vendor/*.tar.xz
+/vendor/*.log
+/vendor/out

@@ -7,18 +7,12 @@ use crate::{codec, encode, scale, source};
 const THUMBNAIL_WIDTH: u32 = 320;
 const JPEG_QUALITY: u8 = 75;
 
-pub fn thumbnail_for(url: &str, headers: &[(String, String)], time_ms: u64) -> Option<Vec<u8>> {
-    let keyframes = source::open(url, headers).ok()?;
-    let nearest = keyframes
-        .iter()
-        .filter(|k| k.time_ms <= time_ms)
-        .last()
-        .or_else(|| keyframes.first())?;
-    // `source::open` doesn't fetch packet bytes yet — that lands with the
-    // FFmpeg backend, same milestone as `codec::decode_keyframe`.
-    let packet: &[u8] = &[];
-    let _ = nearest;
-    let frame = codec::decode_keyframe(packet, "").ok()?;
+/// `path` is a local file for now — see [`source`]'s doc comment for why
+/// remote URLs aren't wired up yet. `_headers` is accepted already so the
+/// JNI-facing signature doesn't have to change when they are.
+pub fn thumbnail_for(path: &str, _headers: &[(String, String)], time_ms: u64) -> Option<Vec<u8>> {
+    let encoded = source::open_and_seek(path, time_ms).ok()?;
+    let frame = codec::decode_keyframe(&encoded).ok()?;
     let small = scale::downscale(&frame, THUMBNAIL_WIDTH);
     encode::to_jpeg(&small, JPEG_QUALITY).ok()
 }
@@ -29,8 +23,9 @@ mod tests {
 
     #[test]
     fn never_panics_when_the_source_cant_open() {
-        // source::open always errs until FFmpeg is wired in — this just
-        // locks in that the whole chain degrades to `None`, not a panic.
-        assert_eq!(thumbnail_for("http://example.invalid/x.mp4", &[], 5_000), None);
+        // On non-Android hosts (this test's target) FFmpeg isn't linked at
+        // all, so source::open_and_seek always errs — this locks in that the
+        // whole chain degrades to `None`, not a panic, regardless of why.
+        assert_eq!(thumbnail_for("/nonexistent.mp4", &[], 5_000), None);
     }
 }
