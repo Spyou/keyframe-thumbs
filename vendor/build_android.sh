@@ -62,6 +62,7 @@ cd "$SRC_DIR"
   --enable-decoder=h264,hevc \
   --enable-parser=h264,hevc \
   --enable-demuxer=mov,matroska,mpegts \
+  --enable-protocol=file \
   --enable-swscale \
   ${EXTRA_CONFIGURE:-} \
   --prefix="$OUT_DIR" \
