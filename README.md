@@ -33,8 +33,9 @@ cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -o jniLibs build --releas
 Produces `libkeyframe_thumbs.so` per ABI under `jniLibs/`, exporting
 `Java_keyframethumbs_Native_requestThumbnail`. A consuming app declares a
 Kotlin/Java class named exactly `keyframethumbs.Native` with a matching
-`external fun requestThumbnail(url: String, timeMs: Long): ByteArray` to
-call into it — no dependency on the consumer's own package name.
+`external fun requestThumbnail(url: String, timeMs: Long, headers: Array<String>): ByteArray`
+to call into it — no dependency on the consumer's own package name. `headers`
+is flat, alternating key/value (`arrayOf("Referer", "https://...", "Cookie", "...")`).
 
 ## Testing
 

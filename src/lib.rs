@@ -8,7 +8,7 @@ mod scale;
 mod session;
 mod source;
 
-use jni::objects::{JByteArray, JClass, JString};
+use jni::objects::{JByteArray, JClass, JObjectArray, JString};
 use jni::sys::jlong;
 use jni::JNIEnv;
 
@@ -16,24 +16,51 @@ use jni::JNIEnv;
 /// consumer's own package name needs to be baked in here — a thin Kotlin
 /// shim class under that exact name is all a consumer needs to declare to
 /// call into this library.
+///
+/// `headers` is a flat `Array<String>` of alternating key, value, value, key,
+/// value... (odd length / unpaired trailing key is just dropped) — avoids
+/// needing a JNI Map conversion or a JSON dependency for what's otherwise a
+/// handful of strings.
 #[no_mangle]
 pub extern "system" fn Java_keyframethumbs_Native_requestThumbnail<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     url: JString<'local>,
     time_ms: jlong,
+    headers: JObjectArray<'local>,
 ) -> JByteArray<'local> {
-    let url: String = env
-        .get_string(&url)
-        .map(|s| s.into())
-        .unwrap_or_default();
-    let jpeg = pipeline::thumbnail_for(&url, &[], time_ms.max(0) as u64);
+    let url: String = env.get_string(&url).map(|s| s.into()).unwrap_or_default();
+    let headers = read_headers(&mut env, &headers);
+    let jpeg = pipeline::thumbnail_for(&url, &headers, time_ms.max(0) as u64);
     match jpeg {
         Some(bytes) => env
             .byte_array_from_slice(&bytes)
             .unwrap_or_else(|_| empty_array(&mut env)),
         None => empty_array(&mut env),
     }
+}
+
+fn read_headers<'local>(
+    env: &mut JNIEnv<'local>,
+    headers: &JObjectArray<'local>,
+) -> Vec<(String, String)> {
+    let len = env.get_array_length(headers).unwrap_or(0);
+    let mut flat = Vec::with_capacity(len.max(0) as usize);
+    for i in 0..len {
+        let s: String = match env.get_object_array_element(headers, i) {
+            Ok(obj) => {
+                let jstr: JString = obj.into();
+                env.get_string(&jstr)
+                    .map(|s| s.into())
+                    .unwrap_or_default()
+            }
+            Err(_) => String::new(),
+        };
+        flat.push(s);
+    }
+    flat.chunks_exact(2)
+        .map(|pair| (pair[0].clone(), pair[1].clone()))
+        .collect()
 }
 
 fn empty_array<'local>(env: &mut JNIEnv<'local>) -> JByteArray<'local> {
