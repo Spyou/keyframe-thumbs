@@ -2,6 +2,7 @@ mod codec;
 mod encode;
 mod ffi;
 mod hls;
+mod net;
 mod pipeline;
 mod scale;
 mod session;

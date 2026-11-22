@@ -6,6 +6,7 @@
 //! this just decides whether that work is needed at all.
 
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 pub struct ThumbnailCache {
     max_entries: usize,
@@ -54,9 +55,52 @@ impl ThumbnailCache {
     }
 }
 
+const MAX_ENTRIES_PER_URL: usize = 64;
+
+static CACHES: OnceLock<Mutex<HashMap<String, ThumbnailCache>>> = OnceLock::new();
+
+/// Looks up `time_ms` in the cache for `key` (one cache per URL, so
+/// different videos' timestamps never collide). On a miss, runs `decode`,
+/// caches a successful result, and returns it — on a hit, `decode` never
+/// runs at all.
+pub fn cached_or(key: &str, time_ms: u64, decode: impl FnOnce() -> Option<Vec<u8>>) -> Option<Vec<u8>> {
+    let caches = CACHES.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = caches
+        .lock()
+        .unwrap()
+        .get(key)
+        .and_then(|c| c.get(time_ms))
+        .map(|b| b.to_vec())
+    {
+        return Some(hit);
+    }
+    let result = decode()?;
+    caches
+        .lock()
+        .unwrap()
+        .entry(key.to_string())
+        .or_insert_with(|| ThumbnailCache::new(MAX_ENTRIES_PER_URL))
+        .put(time_ms, result.clone());
+    Some(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn cached_or_only_decodes_once_per_time() {
+        let key = "cached_or_only_decodes_once_per_time"; // unique: shares the global cache
+        let calls = Cell::new(0);
+        let decode = || {
+            calls.set(calls.get() + 1);
+            Some(vec![9u8])
+        };
+        assert_eq!(cached_or(key, 1_000, decode), Some(vec![9u8]));
+        assert_eq!(cached_or(key, 1_000, decode), Some(vec![9u8]));
+        assert_eq!(calls.get(), 1);
+    }
 
     #[test]
     fn hits_the_same_bucket_for_nearby_times() {

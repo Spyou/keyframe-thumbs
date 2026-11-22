@@ -47,6 +47,7 @@ fn main() {
         .clang_arg(format!("--target={clang_target}"))
         .clang_arg(format!("--sysroot={}", sysroot.display()))
         .allowlist_function("av_.*")
+        .allowlist_function("avio_.*")
         .allowlist_function("avformat_.*")
         .allowlist_function("avcodec_.*")
         .allowlist_function("sws_.*")
