@@ -1,0 +1,18 @@
+[package]
+name = "keyframe_thumbs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "keyframe_thumbs"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "0.21"
+jpeg-encoder = "0.6"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
