@@ -19,6 +19,35 @@ pub fn thumbnail_for(url: &str, headers: &[(String, String)], time_ms: u64) -> O
     })
 }
 
+/// Same pipeline as [`thumbnail_for`] but keeps the error string from
+/// whichever stage failed, instead of collapsing everything to `None`.
+/// Temporary diagnostic entry point — not part of the stable JNI surface.
+pub fn thumbnail_for_debug(
+    url: &str,
+    headers: &[(String, String)],
+    time_ms: u64,
+) -> Result<Vec<u8>, String> {
+    let (target_url, local_time_ms) = if url.contains(".m3u8") {
+        let text = net::fetch_text(url, headers).map_err(|e| format!("fetch_text: {e}"))?;
+        let segments = hls::parse_playlist(url, &text);
+        let idx = hls::segment_for_time(&segments, time_ms).ok_or_else(|| {
+            format!(
+                "segment_for_time: {} segments parsed, none cover {time_ms}ms",
+                segments.len()
+            )
+        })?;
+        let seg = &segments[idx];
+        (seg.url.clone(), time_ms.saturating_sub(seg.start_ms))
+    } else {
+        (url.to_string(), time_ms)
+    };
+    let encoded = source::open_and_seek(&target_url, local_time_ms, headers)
+        .map_err(|e| format!("open_and_seek: {e}"))?;
+    let frame = codec::decode_keyframe(&encoded).map_err(|e| format!("decode_keyframe: {e}"))?;
+    let small = scale::downscale(&frame, THUMBNAIL_WIDTH);
+    encode::to_jpeg(&small, JPEG_QUALITY).map_err(|e| format!("to_jpeg: {e}"))
+}
+
 /// For an HLS URL: fetches the playlist, picks the segment covering
 /// `time_ms`, and returns that segment's URL with `time_ms` rebased to its
 /// own start (each segment is its own standalone container with a

@@ -40,6 +40,28 @@ pub extern "system" fn Java_keyframethumbs_Native_requestThumbnail<'local>(
     }
 }
 
+/// Diagnostic-only: same inputs as `requestThumbnail`, but returns
+/// "OK:<n bytes>" or "ERR:<stage>: <message>" as a string instead of the
+/// JPEG — lets a failure be read directly off a log line instead of
+/// collapsing to an empty array. Not part of the stable surface.
+#[no_mangle]
+pub extern "system" fn Java_keyframethumbs_Native_requestThumbnailDebug<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    url: JString<'local>,
+    time_ms: jlong,
+    headers: JObjectArray<'local>,
+) -> JString<'local> {
+    let url: String = env.get_string(&url).map(|s| s.into()).unwrap_or_default();
+    let headers = read_headers(&mut env, &headers);
+    let result = pipeline::thumbnail_for_debug(&url, &headers, time_ms.max(0) as u64);
+    let msg = match result {
+        Ok(bytes) => format!("OK:{} bytes", bytes.len()),
+        Err(e) => format!("ERR:{e}"),
+    };
+    env.new_string(msg).expect("allocating result string")
+}
+
 fn read_headers<'local>(
     env: &mut JNIEnv<'local>,
     headers: &JObjectArray<'local>,
