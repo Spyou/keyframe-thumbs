@@ -5,9 +5,34 @@
 //! never a crash, never a stall for the caller.
 
 use crate::{codec, encode, hls, net, scale, session, source};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 const THUMBNAIL_WIDTH: u32 = 320;
 const JPEG_QUALITY: u8 = 75;
+
+/// Parsed playlists, keyed by the m3u8 URL. A VOD playlist's segment list
+/// never changes, so fetching and parsing it once per video (not once per
+/// scrub tick) is the single biggest latency win available here — the
+/// playlist text itself can be hundreds of KB.
+static PLAYLIST_CACHE: OnceLock<Mutex<HashMap<String, Vec<hls::Segment>>>> = OnceLock::new();
+
+fn cached_playlist(
+    url: &str,
+    headers: &[(String, String)],
+) -> Result<Vec<hls::Segment>, String> {
+    let cache = PLAYLIST_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = cache.lock().unwrap().get(url) {
+        return Ok(hit.clone());
+    }
+    let text = net::fetch_text(url, headers)?;
+    let segments = hls::parse_playlist(url, &text);
+    cache
+        .lock()
+        .unwrap()
+        .insert(url.to_string(), segments.clone());
+    Ok(segments)
+}
 
 pub fn thumbnail_for(url: &str, headers: &[(String, String)], time_ms: u64) -> Option<Vec<u8>> {
     session::cached_or(url, time_ms, || {
@@ -28,8 +53,7 @@ pub fn thumbnail_for_debug(
     time_ms: u64,
 ) -> Result<Vec<u8>, String> {
     let (target_url, local_time_ms) = if url.contains(".m3u8") {
-        let text = net::fetch_text(url, headers).map_err(|e| format!("fetch_text: {e}"))?;
-        let segments = hls::parse_playlist(url, &text);
+        let segments = cached_playlist(url, headers).map_err(|e| format!("fetch_text: {e}"))?;
         let idx = hls::segment_for_time(&segments, time_ms).ok_or_else(|| {
             format!(
                 "segment_for_time: {} segments parsed, none cover {time_ms}ms",
@@ -60,8 +84,7 @@ fn resolve_target(
     if !url.contains(".m3u8") {
         return Some((url.to_string(), time_ms));
     }
-    let text = net::fetch_text(url, headers).ok()?;
-    let segments = hls::parse_playlist(url, &text);
+    let segments = cached_playlist(url, headers).ok()?;
     let idx = hls::segment_for_time(&segments, time_ms)?;
     let seg = &segments[idx];
     Some((seg.url.clone(), time_ms.saturating_sub(seg.start_ms)))
