@@ -42,3 +42,7 @@ is flat, alternating key/value (`arrayOf("Referer", "https://...", "Cookie", "..
 ```
 cargo test
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
