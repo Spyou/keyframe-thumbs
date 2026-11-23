@@ -69,6 +69,19 @@ fn read_nearest_keyframe(
         let stream = *(*fmt_ctx).streams.add(stream_idx as usize);
         let codecpar = (*stream).codecpar;
 
+        // Profile 5 has no HEVC/HDR10-compatible base layer, so decoding it as
+        // plain HEVC gives badly wrong colours instead of a usable thumbnail.
+        const AV_PKT_DATA_DOVI_CONF: AVPacketSideDataType = 29;
+        const DOVI_PROFILE_5: u8 = 5;
+        let mut dovi_size: usize = 0;
+        let dovi_ptr = av_stream_get_side_data(stream, AV_PKT_DATA_DOVI_CONF, &mut dovi_size);
+        if !dovi_ptr.is_null() && dovi_size >= std::mem::size_of::<AVDOVIDecoderConfigurationRecord>() {
+            let dovi = &*(dovi_ptr as *const AVDOVIDecoderConfigurationRecord);
+            if dovi.dv_profile == DOVI_PROFILE_5 {
+                return Err("Dolby Vision Profile 5 (no SDR/HDR10-compatible base layer)".into());
+            }
+        }
+
         let tb = (*stream).time_base;
         let target_ts = (time_ms as i64 * tb.den as i64) / (1000 * tb.num.max(1) as i64);
 
