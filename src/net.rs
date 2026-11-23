@@ -5,7 +5,7 @@
 
 use std::io::Read;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const CHUNK: u64 = 256 * 1024;
 const AVSEEK_SIZE: i32 = 0x10000; // AVSEEK_SIZE (avio.h) — asks for size, not a real seek.
@@ -30,7 +30,14 @@ pub struct RangeReader {
     pos: u64,
     buf: Vec<u8>,
     buf_start: u64,
+    deadline: Instant,
 }
+
+/// However many range-requests FFmpeg's demuxer probing ends up issuing for
+/// one seek, the whole thing must give up by this wall-clock budget — a
+/// session kept open across scrubs (see `source::remote`) otherwise has no
+/// bound and a single stalling source freezes every future scrub.
+const OP_TIMEOUT: Duration = Duration::from_secs(8);
 
 impl RangeReader {
     pub fn open(url: &str, headers: &[(String, String)]) -> Result<Self, String> {
@@ -41,9 +48,17 @@ impl RangeReader {
             pos: 0,
             buf: Vec::new(),
             buf_start: 0,
+            deadline: Instant::now() + OP_TIMEOUT,
         };
         r.fetch(0, CHUNK)?;
         Ok(r)
+    }
+
+    /// Called at the start of every `open_and_seek`, including on a reused
+    /// (already-open) session, so a budget from a prior scrub never carries
+    /// over to the next one.
+    pub fn reset_deadline(&mut self) {
+        self.deadline = Instant::now() + OP_TIMEOUT;
     }
 
     fn fetch(&mut self, start: u64, len: u64) -> Result<(), String> {
@@ -79,6 +94,9 @@ impl RangeReader {
     /// Reads forward from the current cursor, refilling its buffer with one
     /// more range-request when the cursor has moved past it.
     pub fn read(&mut self, out: &mut [u8]) -> Result<usize, String> {
+        if Instant::now() > self.deadline {
+            return Err("range reader: overall deadline exceeded".into());
+        }
         if self.size > 0 && self.pos >= self.size {
             return Ok(0);
         }

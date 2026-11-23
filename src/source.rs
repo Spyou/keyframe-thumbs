@@ -269,7 +269,9 @@ mod remote {
                 *active = None;
                 *active = Some(open(url, headers)?);
             }
-            let result = read_nearest_keyframe(active.as_ref().unwrap().format.0, time_ms);
+            let current = active.as_ref().unwrap();
+            unsafe { (*(current._reader.0 as *mut RangeReader)).reset_deadline() };
+            let result = read_nearest_keyframe(current.format.0, time_ms);
             if result.is_err() {
                 *active = None;
             }
